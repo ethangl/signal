@@ -1,0 +1,27 @@
+{
+  "raw_signal": "risk-off",
+  "score": 1,
+  "last_close_date": "2026-05-06",
+  "components": {
+    "lqd": [
+      109.19499969482422,
+      110.45292488098144,
+      false
+    ],
+    "move": [
+      76.77999877929688,
+      74.31554992675781,
+      false
+    ],
+    "nfci": [
+      -0.041,
+      -0.02334615384615385,
+      true
+    ]
+  },
+  "deployed_state": "risk-off",
+  "buffer": [
+    "risk-off"
+  ],
+  "asof": "2026-05-06T14:35:18+00:00"
+}
