@@ -1,6 +1,6 @@
 # QQQ Regime Signal Bot
 
-See `SPEC.md` for the strategy. This README covers deployment.
+See `docs/SPEC.md` for the initial strategy. This README covers deployment.
 
 ## Layout
 
