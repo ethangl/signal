@@ -1,17 +1,17 @@
 {
-  "raw_signal": "risk-on",
-  "score": 2,
-  "last_close_date": "2026-05-14",
+  "raw_signal": "risk-off",
+  "score": 1,
+  "last_close_date": "2026-05-15",
   "components": {
     "lqd": [
-      108.55000305175781,
-      110.44759990692138,
+      107.86000061035156,
+      110.44149990081787,
       false
     ],
     "move": [
-      69.62770080566406,
-      73.79678840637207,
-      true
+      79.87110137939453,
+      73.77750537872315,
+      false
     ],
     "nfci": [
       -0.035,
@@ -19,11 +19,11 @@
       true
     ]
   },
-  "deployed_state": "risk-on",
+  "deployed_state": "risk-off",
   "buffer": [
     "risk-on",
     "risk-on",
-    "risk-on"
+    "risk-off"
   ],
-  "asof": "2026-05-14T22:37:21+00:00"
+  "asof": "2026-05-15T22:31:11+00:00"
 }
