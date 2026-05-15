@@ -37,9 +37,13 @@ Cron is `30 21 * * 1-5` (UTC). That's 4:30pm EST in winter, 5:30pm EDT in summer
 Asymmetric:
 
 - raw_signal goes risk-off → deployed flips immediately.
-- raw_signal goes risk-on → deployed flips only after 3 consecutive trading days of risk-on raw_signal.
+- raw_signal goes risk-on → deployed flips only after 5 consecutive trading days of risk-on raw_signal.
 
-The rolling buffer of the last 3 raw_signal values lives in `last_state.json` under `buffer`.
+The rolling buffer of the last 5 raw_signal values lives in `last_state.json` under `rolling_buffer`.
+
+## Risk-off allocation
+
+At the moment of risk-on → risk-off flip, the dollar regime is classified once (DTWEXBGS vs. 200d MA + NFCI sign) and the resulting off-bucket allocation is frozen for the duration of the risk-off period. See `docs/SPEC.md` for the regime table. The classification and target weights are stored in `last_state.json` under `off_allocation`, `off_classified_at`, and `off_regime`.
 
 ## Manual trigger
 

@@ -20,10 +20,33 @@
     ]
   },
   "deployed_state": "risk-off",
-  "buffer": [
-    "risk-on",
-    "risk-on",
+  "rolling_buffer": [
+    "risk-off",
+    "risk-off",
+    "risk-off",
+    "risk-off",
     "risk-off"
   ],
-  "asof": "2026-05-15T22:31:11+00:00"
+  "asof": "2026-05-15T22:58:41+00:00",
+  "off_regime": {
+    "dollar": "weak",
+    "nfci": "loose",
+    "regime": "weak",
+    "allocation": {
+      "XLU": 30,
+      "GLD": 50,
+      "UUP": 20
+    },
+    "dtwex": [
+      118.0392,
+      119.87394499999999
+    ],
+    "nfci_val": -0.524
+  },
+  "off_allocation": {
+    "XLU": 30,
+    "GLD": 50,
+    "UUP": 20
+  },
+  "off_classified_at": "2026-05-15T22:58:41+00:00"
 }
