@@ -1,33 +1,37 @@
 {
-  "raw_signal": "risk-off",
+  "macro_signal": "risk-off",
   "score": 1,
-  "last_close_date": "2026-05-18",
+  "price_filter": true,
+  "last_close_date": "2026-05-19",
   "components": {
     "lqd": [
-      107.66000366210938,
-      110.43424991607667,
+      107.12000274658203,
+      110.42169994354248,
       false
     ],
     "move": [
-      86.07330322265625,
-      73.78251640319824,
+      85.3218002319336,
+      73.79970890045166,
       false
     ],
     "nfci": [
       -0.035,
       -0.017423076923076927,
       true
+    ],
+    "qqq": [
+      701.530029296875,
+      635.455,
+      true
     ]
   },
   "deployed_state": "risk-off",
-  "rolling_buffer": [
-    "risk-off",
-    "risk-off",
+  "macro_rolling_buffer": [
     "risk-off",
     "risk-off",
     "risk-off"
   ],
-  "asof": "2026-05-18T22:32:51+00:00",
+  "asof": "2026-05-19T22:45:31+00:00",
   "off_regime": {
     "dollar": "weak",
     "nfci": "loose",
