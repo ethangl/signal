@@ -13,7 +13,7 @@ STATE_FILE = Path(__file__).parent / "last_state.json"
 FRED_URL = "https://api.stlouisfed.org/fred/series/observations"
 PUSHOVER_URL = "https://api.pushover.net/1/messages.json"
 
-BUFFER_SIZE = 5
+BUFFER_SIZE = 3
 
 # (dollar, nfci) → (regime name, off-bucket allocation as ordered dict).
 DOLLAR_REGIMES = {
@@ -69,18 +69,22 @@ def fred_latest(series: str) -> float:
 def compute_raw_signal() -> dict:
     lqd, lqd_ma, close_date = yf_close_sma("LQD")
     move, move_ma, _ = yf_close_sma("^MOVE")
+    qqq, qqq_ma, _ = yf_close_sma("QQQ", window=50)
     nfci_cr, nfci_cr_ma = fred_value_and_sma("NFCICREDIT", 26)
     c = [lqd > lqd_ma, move < move_ma, nfci_cr < nfci_cr_ma]
     score = sum(c)
-    raw = "risk-on" if score >= 2 else "risk-off"
+    macro = "risk-on" if score >= 2 else "risk-off"
+    price_filter = qqq > qqq_ma
     return {
-        "raw_signal": raw,
+        "macro_signal": macro,
         "score": score,
+        "price_filter": price_filter,
         "last_close_date": close_date,
         "components": {
             "lqd":  [lqd,     lqd_ma,     c[0]],
             "move": [move,    move_ma,    c[1]],
             "nfci": [nfci_cr, nfci_cr_ma, c[2]],
+            "qqq":  [qqq,     qqq_ma,     price_filter],
         },
     }
 
@@ -101,15 +105,23 @@ def classify_dollar_regime() -> dict:
     }
 
 
-def apply_hysteresis(buffer: list[str], prev_deployed: str | None) -> str:
-    raw = buffer[-1]
+def apply_hysteresis(
+    buffer: list[str], prev_deployed: str | None, price_filter: bool
+) -> str:
+    macro = buffer[-1]
     if prev_deployed is None:
-        return raw
-    if raw == "risk-off":
+        # First run: seed deployed_state from macro_signal alone. Price filter
+        # only gates re-entry from an established risk-off state.
+        return macro
+    if macro == "risk-off":
         return "risk-off"
     if prev_deployed == "risk-on":
         return "risk-on"
-    if len(buffer) >= BUFFER_SIZE and all(b == "risk-on" for b in buffer[-BUFFER_SIZE:]):
+    macro_streak = (
+        len(buffer) >= BUFFER_SIZE
+        and all(b == "risk-on" for b in buffer[-BUFFER_SIZE:])
+    )
+    if macro_streak and price_filter:
         return "risk-on"
     return "risk-off"
 
@@ -130,6 +142,12 @@ def render_components(comp: dict) -> str:
     )
 
 
+def render_price_filter(comp: dict) -> str:
+    qqq_v, qqq_m, qqq_ok = comp["qqq"]
+    mark = "✓" if qqq_ok else "✗"
+    return f"QQQ {qqq_v:.2f} vs 50d MA {qqq_m:.2f} [{mark}]"
+
+
 def render_dollar_context(regime: dict) -> str:
     dtwex_v, dtwex_m = regime["dtwex"]
     return (
@@ -142,11 +160,11 @@ def render_off_flip(state: dict) -> str:
     regime = state["off_regime"]
     return (
         f"REGIME CHANGE: risk-off\n"
-        f"Score {state['score']}/3. Dollar regime: {regime['regime']}\n\n"
+        f"Macro score {state['score']}/3. Dollar regime: {regime['regime']}\n\n"
         f"Monday 10:30am ET execution:\n"
         f"SELL: 100% QQQ\n"
         f"BUY:  {fmt_alloc(state['off_allocation'])}\n\n"
-        f"Components:\n"
+        f"Macro components:\n"
         + render_components(state["components"]) + "\n\n"
         f"Dollar regime context:\n"
         + render_dollar_context(regime)
@@ -157,11 +175,12 @@ def render_on_flip(state: dict, prev_off_alloc: dict | None) -> str:
     sell = fmt_alloc(prev_off_alloc) if prev_off_alloc else "current off-bucket allocation"
     return (
         f"REGIME CHANGE: risk-on\n"
-        f"Score {state['score']}/3 confirmed for {BUFFER_SIZE} consecutive days.\n\n"
+        f"Macro score {state['score']}/3 confirmed for {BUFFER_SIZE} consecutive days.\n"
+        f"Price filter: {render_price_filter(state['components'])}\n\n"
         f"Monday 10:30am ET execution:\n"
         f"SELL: {sell}\n"
         f"BUY:  100% QQQ\n\n"
-        f"Components:\n"
+        f"Macro components:\n"
         + render_components(state["components"])
     )
 
@@ -171,11 +190,13 @@ def render_status(state: dict) -> str:
         target = "100% QQQ"
     else:
         target = fmt_alloc(state["off_allocation"])
+    pf = "✓" if state["price_filter"] else "✗"
     return (
-        f"raw_signal: {state['raw_signal']} (score {state['score']}/3)\n"
+        f"macro_signal: {state['macro_signal']} (score {state['score']}/3)\n"
+        f"price_filter: {pf}  ({render_price_filter(state['components'])})\n"
         f"deployed_state: {state['deployed_state']}\n"
         f"target: {target}\n"
-        f"rolling_buffer: {state['rolling_buffer']}\n"
+        f"macro_rolling_buffer: {state['macro_rolling_buffer']}\n"
         f"as of close: {state['last_close_date']}\n\n"
         + render_components(state["components"])
     )
@@ -199,7 +220,15 @@ def main() -> int:
     cur = compute_raw_signal()
     prev = json.loads(STATE_FILE.read_text()) if STATE_FILE.exists() else {}
 
-    needs_buffer_migration = "buffer" in prev and "rolling_buffer" not in prev
+    # v1.7 → v1.8: state file rename rolling_buffer → macro_rolling_buffer
+    # and resize from 5 to 3. Accept either old name on read.
+    prev_buffer = prev.get("macro_rolling_buffer")
+    if prev_buffer is None:
+        prev_buffer = prev.get("rolling_buffer") or prev.get("buffer")
+
+    needs_buffer_migration = bool(prev) and (
+        prev_buffer is None or len(prev_buffer) != BUFFER_SIZE
+    )
     needs_alloc_classification = (
         prev.get("deployed_state") == "risk-off" and "off_allocation" not in prev
     )
@@ -209,25 +238,26 @@ def main() -> int:
         print(
             f"Already processed close of {cur['last_close_date']}. No-op.\n"
             f"deployed_state: {prev.get('deployed_state')}, "
-            f"rolling_buffer: {prev.get('rolling_buffer')}"
+            f"macro_rolling_buffer: {prev_buffer}"
         )
         return 0
 
-    # v1.6 → v1.7 migration: seed rolling_buffer with raw_signal × 5.
+    # On schema migration, seed macro_rolling_buffer with the current
+    # macro_signal repeated BUFFER_SIZE times (per v1.7 → v1.8 spec).
     if needs_buffer_migration:
-        buffer = [cur["raw_signal"]] * BUFFER_SIZE
+        buffer = [cur["macro_signal"]] * BUFFER_SIZE
     elif is_new_close:
-        buffer = (prev.get("rolling_buffer", []) + [cur["raw_signal"]])[-BUFFER_SIZE:]
+        buffer = ((prev_buffer or []) + [cur["macro_signal"]])[-BUFFER_SIZE:]
     else:
-        buffer = prev["rolling_buffer"]
+        buffer = prev_buffer
 
     prev_deployed = prev.get("deployed_state")
-    deployed = apply_hysteresis(buffer, prev_deployed)
+    deployed = apply_hysteresis(buffer, prev_deployed, cur["price_filter"])
 
     state = {
         **cur,
         "deployed_state": deployed,
-        "rolling_buffer": buffer,
+        "macro_rolling_buffer": buffer,
         "asof": datetime.now(timezone.utc).isoformat(timespec="seconds"),
     }
 

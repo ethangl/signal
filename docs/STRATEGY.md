@@ -4,7 +4,7 @@
 
 This document is the complete reference for the household investment strategy
 across Roth IRA and taxable accounts. The deployed automation (`SPEC.md`) is a
-simplified subset of what's described here. Use this doc to:
+simplified subset of what’s described here. Use this doc to:
 
 - Recover the reasoning behind specific parameters
 - Decide whether to upgrade the deployed system to a richer variant
@@ -18,13 +18,13 @@ changes what works.
 ### Roth IRA (Schwab) — active strategy
 
 Tax-protected. No capital gains friction on rotations. This is where the active
-regime-based strategy runs. Currently deployed as v1.7.
+regime-based strategy runs. Currently deployed as v1.8.
 
 ### Taxable account (Schwab) — passive 50/50
 
 Tax friction kills active strategies. Backtested: the active strategy
 underperforms QQQ B&H by ~4 points/yr after-tax due to short-term gain rates
-on every rotation. Solution: don't run it here.
+on every rotation. Solution: don’t run it here.
 
 Holdings:
 
@@ -49,29 +49,39 @@ If income is high enough to make federal-tax-free yield meaningful
 (top brackets), consider muni money market like VMSXX in taxable for cash
 allocation. At ~32% federal + state, tax-equivalent yield can beat SGOV.
 
-## The signal (v1.7 deployed)
+## The signal (v1.8 deployed)
 
-### Three sub-signals
+### Three macro sub-signals (drive risk-off)
 
 1. **LQD > 200-day SMA**: investment-grade credit ETF above its long-term trend.
    When credit is healthy, equity risk is rewarded.
-2. **MOVE < 200-day SMA**: rate volatility below long-term trend. Rate
+1. **MOVE < 200-day SMA**: rate volatility below long-term trend. Rate
    uncertainty often precedes equity stress.
-3. **NFCI_credit < 26-week SMA**: Chicago Fed credit conditions sub-index
+1. **NFCI_credit < 26-week SMA**: Chicago Fed credit conditions sub-index
    below its medium-term trend. Composite measure of bank lending stress.
 
-raw_signal = risk-on if at least 2 of 3 are true, else risk-off.
+macro_signal = risk-on if at least 2 of 3 are true, else risk-off.
 
-### Hysteresis (asymmetric)
+### Price-action sub-signal (gates risk-on re-entry)
 
-- Risk-on → risk-off: act on first day of negative signal.
-- Risk-off → risk-on: require 5 consecutive days of positive signal.
+- **QQQ > 50-day SMA**: confirms the equity market itself is establishing
+  a short-term uptrend before committing to risk-on.
 
-Rationale: stress regimes are asymmetric. They start fast and have false-bottom
-recoveries. Quick to defense + slow to offense filters out head-fakes without
-giving up bear-market protection.
+### Asymmetric state transitions
 
-### Why these three signals
+- Risk-off direction: macro_signal == False triggers immediate flip to risk-off.
+  The price filter is not consulted. Macro deterioration is sufficient.
+- Risk-on direction: requires macro_signal positive for 3 consecutive days
+  AND QQQ > 50d MA on the candidate flip day.
+
+Rationale: stress regimes and recoveries have asymmetric dynamics. Going
+defensive is about detecting _macro deterioration_ (which the macro signal
+catches well). Re-entering risk is about confirming _the equity market
+itself is recovering_ (which requires a price-action filter, not just macro
+improvement). The 50d MA filter catches scenarios like late 2022 where
+credit normalized weeks before QQQ established an uptrend.
+
+### Why these three macro signals
 
 Tested ~80 alternatives. The winning trio works because each signal captures
 a different stress mechanism:
@@ -87,10 +97,14 @@ Combinations tested and rejected:
 
 - Single signal (LQD only): more whipsaws, no information advantage
 - LQD + MOVE only: misses 2025-style soft regime
-- LQD + Moody's BAA-10Y: BAA spread is too slow, missed 2022 by 7 months
+- LQD + Moody’s BAA-10Y: BAA spread is too slow, missed 2022 by 7 months
 - Adding FXY as 4th signal: degrades performance, FXY signal is too noisy
 - Adding HYG/LQD divergence as 4th signal: hurts performance, including in
   2018 (the year the thesis specifically predicts should benefit)
+- Adding VIX as 4th signal: improves CAGR via threshold relaxation but
+  loses bear-market protection (2022 underperforms by 5 points)
+- Replacing MOVE with VIX: MOVE is the better single equity-vol input for
+  this strategy
 - Various OAS series: real but FRED restricts daily access to 3-year window
 
 ### Why 2-of-3 voting (not 3-of-3 or 1-of-3)
@@ -99,14 +113,32 @@ Combinations tested and rejected:
 1-of-3 (any can trigger risk-on): too permissive, defensive value collapses.
 2-of-3: best Sharpe in backtest.
 
-## The allocations (v1.7 deployed)
+### Why the 50d MA (not 100d or 200d) for the price filter
+
+Parameter swept windows 20d to 250d. Sharpe peaks at 40-60d, with 50d slightly
+ahead. The 200d MA filter delays re-entry too much in clean recoveries (2009, 2023) and loses upside. The 50d MA is fast enough to capture genuine
+recoveries but slow enough to filter out the multi-week head-fake rallies
+that occurred mid-2022 bear and which the older v1.7 spec would have
+re-entered into prematurely.
+
+### Why N=3 macro streak (not N=5 or N=1)
+
+v1.7 used N=5 with no price filter. The price filter and the hysteresis
+were doing similar work (both delay re-entry). With the 50d MA filter
+providing price-action confirmation, less temporal hysteresis is needed.
+Tested N=1 (no hysteresis at all) and it works with a slower price filter
+(100d MA) but causes whipsaws with the 50d MA — specifically a -3.6% CAGR
+in 2022 vs +4.6% with N=3. N=3 with 50d MA is the cleanest combination:
+captures most of the upside with bounded whipsaw risk.
+
+## The allocations (v1.8 deployed)
 
 ### Risk-on
 
 100% QQQ.
 
 Possible upgrades (on-shelf variants below) replace this with vol-targeted
-leverage, but deployed v1.7 is plain QQQ.
+leverage, but deployed v1.8 is plain QQQ.
 
 ### Risk-off (dollar-regime-aware)
 
@@ -135,15 +167,15 @@ Why not financials despite intuitive case:
 - Tested XLF, KIE (insurance), KRE (regional banks), KBE, IAI
 - All lose more than utilities in stress
 - KIE is the closest to defensive but still -38% annualized in QQQ stress
-  (vs XLU's -19%)
+  (vs XLU’s -19%)
 - Insurance was positive in 2022 specifically due to rate-rise benefiting
   bond portfolios, but this is a single regime, not a structural property
 
 Why not all-defensive sectors (XLU + XLP + XLV mixed):
 
 - Equal-weight mix of defensives slightly underperforms XLU alone
-- Diversification across defensive sectors doesn't add much because they
-  share the equity beta they're trying to dampen
+- Diversification across defensive sectors doesn’t add much because they
+  share the equity beta they’re trying to dampen
 
 Why dollar-regime-aware off-bucket sizing:
 
@@ -152,6 +184,15 @@ Why dollar-regime-aware off-bucket sizing:
 - Reduces MaxDD from -22% to -17% with same CAGR
 - Only ~5% of days are stress regime, so sample is small — variance on
   forward outcome is wide
+
+Why not split GLD into GLD/IEI:
+
+- Tested GLD:IEI ratios from 100/0 to 0/100 within each dollar regime allocation
+- Sharpe roughly flat across the range (1.22 to 1.25)
+- More IEI helps in classic deflationary stress (2018, 2020 COVID) but hurts
+  in rate-rise regimes (2022) and broad bulls
+- Pure GLD has highest CAGR and lowest MaxDD; trade-off doesn’t justify the
+  complexity
 
 ## Execution mechanics
 
@@ -182,7 +223,7 @@ action, prices, emotional state, deviations from spec. Audit quarterly.
 ### Settlement awareness (T+1 since May 2024)
 
 - Same-session ETF rotation is fine
-- Don't execute reversal within 2 business days of original (hysteresis
+- Don’t execute reversal within 2 business days of original (hysteresis
   layer prevents this in normal operation)
 
 ### Disaster recovery
@@ -194,12 +235,12 @@ action, prices, emotional state, deviations from spec. Audit quarterly.
 ### First-of-month contributions
 
 Independent of regime signal. Always buy QQQ on the 1st (or first trading
-day after). Don't conflate rotation trades with new-money deployment.
+day after). Don’t conflate rotation trades with new-money deployment.
 
 ## Performance benchmarking
 
-Don't compare to QQQ. Wrong benchmark — strategy gives up CAGR for
-risk-adjusted return, you'll abandon it.
+Don’t compare to QQQ. Wrong benchmark — strategy gives up CAGR for
+risk-adjusted return, you’ll abandon it.
 
 Compare to:
 
@@ -229,7 +270,7 @@ Not deployed because:
 
 - Requires daily attention
 - TQQQ has decay properties most retail investors misunderstand
-- Manual execution adds slippage that the backtest doesn't model
+- Manual execution adds slippage that the backtest doesn’t model
 
 ### RSI(2) volatility overlay
 
@@ -275,9 +316,9 @@ Not deployed because:
 Z-score the gap between each sub-signal and its threshold. Higher conviction
 = faster action; lower conviction = slower:
 
-- Ties with fixed N=5 on Sharpe
+- Ties with fixed N=5 on Sharpe (in pre-v1.8 architecture)
 - Marginally better in fast regime transitions, worse in chop
-- Not deployed because fixed N=5 is empirically dominant and simpler
+- Not deployed because fixed N values are empirically dominant and simpler
 
 ### Taxable hedge overlay (put spreads)
 
@@ -292,7 +333,7 @@ Backtested with realistic IV skew + MOVE bump: marginal Sharpe improvement,
 reduces MaxDD by 3-5 points at 100% notional. Active hedging is psychologically
 hard to execute consistently; premium drag in calm years (1-2%/yr) is real.
 
-## Tested and rejected (don't re-litigate)
+## Tested and rejected (don’t re-litigate)
 
 - **PFIX permanent or tactical**: 5y of data dominated by rate-shock regime,
   out-of-sample expectation much worse, decay risk in calm regimes severe.
@@ -303,7 +344,12 @@ hard to execute consistently; premium drag in calm years (1-2%/yr) is real.
 - **FXY as regime input**: degrades all variants tested.
 - **HYG/LQD divergence as 4th signal**: hurts performance, including in 2018
   when McClellan-style thesis specifically predicts it should help.
-- **Currency baskets short of EUR/JPY/etc.**: retail products don't exist
+- **VIX as 4th macro signal (2-of-4 voting)**: improves CAGR via threshold
+  relaxation but loses bear-market protection (2022 underperforms by 5 points).
+- **VIX replacing MOVE**: slightly worse than MOVE (Sharpe 1.29 vs 1.32).
+- **VIX term structure (contango as input)**: 92% positive, too permissive
+  to add information.
+- **Currency baskets short of EUR/JPY/etc.**: retail products don’t exist
   in IRA-eligible form.
 - **Buffered ETFs (BJUL/PJUL)**: 2-3% structural drag, only for behavioral
   reasons.
@@ -312,7 +358,7 @@ hard to execute consistently; premium drag in calm years (1-2%/yr) is real.
 - **Cross-sectional momentum across {QQQ, SPY, IWM, EFA, EEM}**: every variant
   underperforms always-QQQ baseline.
 - **Symmetric hysteresis (N=2, 3, 5, 10)**: all worse than asymmetric
-  N_off=1, N_on=5.
+  N_off=1, N_on>1.
 - **Offensive-bias hysteresis (slow to defense, quick to offense)**: drawdown
   blows up to -32%.
 - **Vol-scaled MA windows**: parameter sweeps reveal effect is largely
@@ -322,6 +368,15 @@ hard to execute consistently; premium drag in calm years (1-2%/yr) is real.
 - **TSMOM reformulation of signals**: 12-month trailing returns are too slow
   for regime detection. MA crossings respond faster to regime changes. Lost
   0.2-0.4 Sharpe across all TSMOM variants.
+- **GLD/IEI split in off-bucket**: tested ratios 100/0 to 0/100, all roughly
+  flat in Sharpe; pure GLD has best CAGR and MaxDD.
+- **Equal-weight 25/25/25/25 GLD/IEI/UUP/XLU off-bucket**: ties on Sharpe
+  with v1.5 baseline but loses 0.7 points CAGR and 0.5 points drawdown.
+- **Eliminating hysteresis entirely with 50d MA price filter**: -3.6% CAGR
+  in 2022 because the 50d MA isn’t slow enough on its own to filter all
+  bear-market head-fake rallies.
+- **Long-window price filter (200d MA) for risk-on**: too restrictive,
+  delays re-entry too long in clean recoveries.
 - **Margin on PFIX or anything else**: combines volatile asset + leverage +
   margin interest + theta decay = asymmetric ruin.
 - **Active strategy in taxable account**: tax friction kills the math;
@@ -339,11 +394,13 @@ modest CAGR underperformance in bull markets for substantially better
 drawdown profile, which improves the probability you actually stick with
 the strategy across full cycles.
 
-### Why these specific MA periods (200d, 200d, 26w)
+### Why these specific MA periods (200d for LQD/MOVE, 26w for NFCI, 50d for QQQ)
 
 Tested 50d, 100d, 200d, 252d for LQD/MOVE. 200d was robust across
 sub-periods without being so slow it missed 2018/2020 transitions. For
-NFCI_credit (weekly data), 26-week MA is the equivalent timescale.
+NFCI_credit (weekly data), 26-week MA is the equivalent timescale. For the
+QQQ price filter, parameter sweep showed 40-60d is the Sharpe peak — fast
+enough to confirm recoveries, slow enough to filter bear-market head-fakes.
 
 ### Why XLU specifically vs. USMV or VPU
 
@@ -363,38 +420,57 @@ slightly cheaper expense ratio. Either is acceptable.
 UUP tracks DXY directly (~58% EUR weight). USDU is a managed product with
 discretionary weights. UUP is more predictable.
 
-### Why hysteresis N_on = 5 specifically
+### Why asymmetric signals for risk-on vs risk-off
 
-Tested 1, 2, 3, 5, 10 plus adaptive variants. N=5 produces lowest drawdown
-(-16.8%) with Sharpe tied for best (1.26). Adaptive approaches (z-score
-conviction, flip-count scaling) don't beat fixed N=5.
+Risk-off is a question about emerging macro stress — credit, vol, and
+conditions deterioration are forward-looking signals of equity stress.
+Risk-on is a question about whether the equity market itself is establishing
+an uptrend — a price-action question, not a credit-conditions question.
+The 2022-2023 transition was the canonical case: credit normalized in
+late 2022 but QQQ chopped sideways through Q1 2023 before launching higher.
+v1.7’s signal would have re-entered in December 2022, two months early.
+v1.8’s 50d MA filter delayed re-entry to mid-January 2023, much closer
+to the actual sustained recovery.
+
+### Why N=3 macro streak (not eliminating hysteresis entirely)
+
+Tested N=1 (no hysteresis) with various price filter windows. Works with
+slow filters (100d MA) but causes whipsaws with faster filters (50d). The
+50d filter is preferred because it captures recoveries faster, so N=3
+provides the small amount of additional patience needed to avoid bad
+re-entries during prolonged choppy regimes like 2022.
 
 ### Why static dollar regime classification
 
 Classification happens once at risk-off flip, then frozen. Reweighting daily
 based on dollar regime changes would create excessive trading within the
-off-bucket. The small benefit of dynamic adjustment isn't worth the
+off-bucket. The small benefit of dynamic adjustment isn’t worth the
 operational complexity.
 
 ## Annual review checklist (every January 1)
 
-Don't modify rules during active losing positions. On Jan 1 each year:
+Don’t modify rules during active losing positions. On Jan 1 each year:
 
 1. Pull last 12 months of trade journal entries
-2. Compare strategy returns to:
-   - QQQ B&H (sanity check)
-   - 60/40 SPY/AGG (real benchmark)
-   - Target-date fund (life-cycle benchmark)
-3. Count trades. If > 12 in a year, hysteresis tuning may be off.
-4. Review emotional-state column for patterns of override pressure
-5. Re-read the "Tested and rejected" list before considering changes
-6. If considering changes:
-   - Document the proposed change and reasoning
-   - Backtest against full history
-   - Run parameter sweep to check robustness
-   - Wait until next January to deploy (annual cadence is the discipline
-     that prevents recency-driven tinkering)
-7. Update this doc with any deployed changes
+1. Compare strategy returns to:
+
+- QQQ B&H (sanity check)
+- 60/40 SPY/AGG (real benchmark)
+- Target-date fund (life-cycle benchmark)
+
+1. Count trades. If > 12 in a year, hysteresis tuning may be off.
+1. Review emotional-state column for patterns of override pressure
+1. Re-read the “Tested and rejected” list before considering changes
+1. If considering changes:
+
+- Document the proposed change and reasoning
+- Backtest against full history
+- Run parameter sweep to check robustness
+- Verify in-sample / out-of-sample stability
+- Wait until next January to deploy (annual cadence is the discipline
+  that prevents recency-driven tinkering)
+
+1. Update this doc with any deployed changes
 
 ## Account targets
 
@@ -412,9 +488,9 @@ journal are the discipline architecture. If any of these decay, the
 strategy decays.
 
 Specifically: the moment you start checking the signal more often than
-the deployed cadence, or start reading the daily output to "see how the
-strategy is doing," you've started the slide toward overriding it.
-The system runs you, not the other way around. That's the design.
+the deployed cadence, or start reading the daily output to “see how the
+strategy is doing,” you’ve started the slide toward overriding it.
+The system runs you, not the other way around. That’s the design.
 
 ## Backtest implementation reference
 
@@ -422,9 +498,9 @@ The system runs you, not the other way around. That's the design.
 
 **Equity ETFs (yfinance)**
 
-- QQQ, TQQQ, SHV, LQD, ^MOVE, GLD, UUP, XLU, VIXY
+- QQQ, TQQQ, SHV, LQD, ^MOVE, GLD, UUP, XLU, VIXY, IEI
 - Use auto_adjust=True for split/dividend-adjusted closes
-- yfinance returns multi-column DataFrames; need ["Close"] accessor
+- yfinance returns multi-column DataFrames; need [“Close”] accessor
 - Common gotcha: ETFs have different inception dates
 
 **FRED data (requires API key)**
@@ -438,137 +514,147 @@ The system runs you, not the other way around. That's the design.
 - FRED occasionally returns 200 with no observations key — wrap in retry
   with 2-second backoff, max 3 attempts
 - Note: ICE BofA OAS series (BAMLC0A0CM etc) are now licensed-data-only as
-  of April 2026, FRED only serves 3 years. Use Moody's BAA10Y/AAA10Y if you
+  of April 2026, FRED only serves 3 years. Use Moody’s BAA10Y/AAA10Y if you
   need credit spreads with long history.
 
 ### Signal computation (Python pseudocode)
 
-    def healthy(series, ma_period):
-        return (series > series.rolling(ma_period).mean()).shift(1).fillna(False)
+```
+def healthy(series, ma_period):
+    return (series > series.rolling(ma_period).mean()).shift(1).fillna(False)
 
-    def calm_ma(series, ma_period):
-        return (series < series.rolling(ma_period).mean()).shift(1).fillna(False)
+def calm_ma(series, ma_period):
+    return (series < series.rolling(ma_period).mean()).shift(1).fillna(False)
 
-    sig_lqd = healthy(LQD_close, 200)
-    sig_move = calm_ma(MOVE_close, 200)
+# Macro signals
+sig_lqd = healthy(LQD_close, 200)
+sig_move = calm_ma(MOVE_close, 200)
 
-    nfci_daily = nfci_credit_weekly.reindex(daily_index, method='ffill').shift(5)
-    sig_nfci = (nfci_daily < nfci_daily.rolling(26 * 5).mean()).shift(1).fillna(False)
+nfci_daily = nfci_credit_weekly.reindex(daily_index, method='ffill').shift(5)
+sig_nfci = (nfci_daily < nfci_daily.rolling(26 * 5).mean()).shift(1).fillna(False)
 
-    sig_score = sig_lqd.astype(int) + sig_move.astype(int) + sig_nfci.astype(int)
-    raw_signal = (sig_score >= 2)
+macro_score = sig_lqd.astype(int) + sig_move.astype(int) + sig_nfci.astype(int)
+macro_signal = (macro_score >= 2)
+
+# Price filter
+price_filter = healthy(QQQ_close, 50)
+```
 
 ### Critical implementation notes
 
-1.  **Always shift signals by 1 day before applying to returns.** A signal
-    computed from today's close cannot inform today's trade. Failure to
-    shift creates lookahead bias.
+1. **Always shift signals by 1 day before applying to returns.** A signal
+   computed from today’s close cannot inform today’s trade. Failure to
+   shift creates lookahead bias.
+1. **NFCI lag must be 5 trading days.** NFCI is published Wednesday-Thursday
+   for the prior week’s data.
+1. **MA warmup matters.** Skip first ~250 trading days when computing strategy
+   stats. Use warmup_end = “2008-04-01” for series starting around 2007.
+1. **Returns calculation.** Use simple pct_change(), not log returns.
+1. **State machine.** The v1.8 deployment uses asymmetric rules:
 
-2.  **NFCI lag must be 5 trading days.** NFCI is published Wednesday-Thursday
-    for the prior week's data.
-
-3.  **MA warmup matters.** Skip first ~250 trading days when computing strategy
-    stats. Use warmup_end = "2008-04-01" for series starting around 2007.
-
-4.  **Returns calculation.** Use simple pct_change(), not log returns.
-
-5.  **Hysteresis state machine.** Maintain separate deployed_state, not just
-    raw_signal. The deployed state has asymmetric lag.
-
-        def apply_hysteresis(raw, n_to_off=1, n_to_on=5):
-            out = raw.copy()
-            state = raw.iloc[0]
-            countdown = 0
-            target = state
-            for i in range(len(raw)):
-                observed = raw.iloc[i]
-                if observed != state:
-                    threshold = n_to_off if observed == 0 else n_to_on
-                    if observed != target:
-                        target = observed
-                        countdown = 1
-                    else:
-                        countdown += 1
-                    if countdown >= threshold:
-                        state = observed
-                        countdown = 0
-                        target = state
-                else:
-                    countdown = 0
-                    target = state
-                out.iloc[i] = state
-            return out
+   ```
+   def deploy_with_filter(macro, price_filter, n_to_on=3):
+       out = pd.Series(0, index=macro.index, dtype=int)
+       state = int(macro.iloc[0])
+       macro_streak = 0
+       for i in range(len(macro)):
+           m = int(macro.iloc[i])
+           p = bool(price_filter.iloc[i])
+           if state == 1:
+               # Risk-on: leave immediately on macro negative
+               if m == 0:
+                   state = 0
+                   macro_streak = 0
+           else:
+               # Risk-off: need macro streak AND price filter
+               if m == 1:
+                   macro_streak += 1
+                   if macro_streak >= n_to_on and p:
+                       state = 1
+                       macro_streak = 0
+               else:
+                   macro_streak = 0
+           out.iloc[i] = state
+       return out
+   ```
 
 ### Standard stat computation
 
-    def stats(eq_curve, idx_start=None, idx_end=None):
-        e = eq_curve.loc[idx_start:idx_end].dropna()
-        if len(e) < 30: return None
-        e = e / e.iloc[0]
-        yrs = (e.index[-1] - e.index[0]).days / 365.25
-        final = e.iloc[-1]
-        cagr = final ** (1/yrs) - 1
-        daily_ret = e.pct_change().dropna()
-        sharpe = (daily_ret.mean() / daily_ret.std() * (252 ** 0.5)
-                  if daily_ret.std() > 0 else 0)
-        maxdd = (e / e.cummax() - 1).min()
-        return {"final": final, "cagr": cagr, "sharpe": sharpe, "maxdd": maxdd}
+```
+def stats(eq_curve, idx_start=None, idx_end=None):
+    e = eq_curve.loc[idx_start:idx_end].dropna()
+    if len(e) < 30: return None
+    e = e / e.iloc[0]
+    yrs = (e.index[-1] - e.index[0]).days / 365.25
+    final = e.iloc[-1]
+    cagr = final ** (1/yrs) - 1
+    daily_ret = e.pct_change().dropna()
+    sharpe = (daily_ret.mean() / daily_ret.std() * (252 ** 0.5)
+              if daily_ret.std() > 0 else 0)
+    maxdd = (e / e.cummax() - 1).min()
+    return {"final": final, "cagr": cagr, "sharpe": sharpe, "maxdd": maxdd}
+```
 
 ### Standard sub-period set for evaluation
 
-    PERIODS = [
-        ("Full",          None,            None),
-        ("GFC 2008",      "2008-01-01",    "2009-06-30"),
-        ("2018",          "2018-01-01",    "2018-12-31"),
-        ("2020 COVID",    "2020-01-01",    "2020-12-31"),
-        ("2022 bear",     "2022-01-01",    "2022-12-31"),
-        ("Aug 2024 yen",  "2024-07-01",    "2024-09-30"),
-        ("2023-2024",     "2023-01-01",    "2024-12-31"),
-        ("2025-now",      "2025-01-01",    None),
-    ]
+```
+PERIODS = [
+    ("Full",          None,            None),
+    ("GFC 2008",      "2008-01-01",    "2009-06-30"),
+    ("2018",          "2018-01-01",    "2018-12-31"),
+    ("2020 COVID",    "2020-01-01",    "2020-12-31"),
+    ("2022 bear",     "2022-01-01",    "2022-12-31"),
+    ("Early 2023 recovery", "2023-01-01", "2023-06-30"),
+    ("Aug 2024 yen",  "2024-07-01",    "2024-09-30"),
+    ("2023-2024",     "2023-01-01",    "2024-12-31"),
+    ("2025-now",      "2025-01-01",    None),
+]
+```
 
-### Pitfalls encountered (don't repeat)
+### Pitfalls encountered (don’t repeat)
 
 1. **VIX as IV proxy without skew model**: overstates hedge effectiveness
    by 30-50%. Add a skew bump for realistic options pricing.
-
-2. **Daily-reset inverse ETFs in backtests**: BITI, EUM, etc. lose value
+1. **Daily-reset inverse ETFs in backtests**: BITI, EUM, etc. lose value
    in volatile sideways markets even with no directional move. Use actual
    ETF price returns.
-
-3. **Forgetting the 1-day shift on signals**: lookahead bias. Most common
+1. **Forgetting the 1-day shift on signals**: lookahead bias. Most common
    bug.
-
-4. **Resampling weekly NFCI to daily without forward-fill or shift**:
+1. **Resampling weekly NFCI to daily without forward-fill or shift**:
    creates NaN gaps that break correlations or applies future data.
-
-5. **Comparing strategies with different start dates**: always restrict
+1. **Comparing strategies with different start dates**: always restrict
    comparisons to common windows.
-
-6. **Parameter sweeps that look impressive but don't generalize**: if a
+1. **Parameter sweeps that look impressive but don’t generalize**: if a
    parameter sweep shows wide variation in results across reasonable
-   parameter values, the improvement isn't real — even if individual
-   configurations look great.
+   parameter values, the improvement isn’t real — even if individual
+   configurations look great. Test IS/OOS stability before deploying.
+1. **Confusing threshold relaxation with new information**: adding a 4th
+   signal with the same vote threshold (e.g., VIX 2-of-4) effectively
+   loosens the macro requirement. Improvements from this look real in
+   bull markets but fail in bears.
 
 ### Repo structure suggestion
 
-    strategy-bot/
-    ├── README.md
-    ├── SPEC.md                  # implementation contract (deployed system)
-    ├── STRATEGY.md              # human reference (this doc)
-    ├── main.py                  # daily signal bot
-    ├── dashboard.py             # ad-hoc state printer
-    ├── last_state.json          # committed state
-    ├── .github/workflows/
-    │   └── cron.yml             # daily schedule
-    └── backtests/
-        ├── README.md            # what each backtest tests
-        ├── _common.py           # shared data pulls, stats functions
-        ├── v1_7_baseline.py     # reproduce deployed strategy
-        ├── hysteresis_test.py
-        ├── defensive_sectors.py
-        ├── vol_overlay.py
-        ├── dollar_regime.py
-        ├── tsmom_signals.py
-        ├── parameter_sweep.py
-        └── ... (one file per question explored)
+```
+strategy-bot/
+├── README.md
+├── SPEC.md                  # implementation contract (deployed system)
+├── STRATEGY.md              # human reference (this doc)
+├── main.py                  # daily signal bot
+├── dashboard.py             # ad-hoc state printer
+├── last_state.json          # committed state
+├── .github/workflows/
+│   └── cron.yml             # daily schedule
+└── backtests/
+    ├── README.md            # what each backtest tests
+    ├── _common.py           # shared data pulls, stats functions
+    ├── v1_8_baseline.py     # reproduce deployed strategy
+    ├── hysteresis_test.py
+    ├── defensive_sectors.py
+    ├── vol_overlay.py
+    ├── dollar_regime.py
+    ├── tsmom_signals.py
+    ├── asymmetric_signals.py
+    ├── parameter_sweep.py
+    └── ... (one file per question explored)
+```

@@ -2,14 +2,15 @@
 import json
 from pathlib import Path
 
-from main import compute_raw_signal, fmt_alloc, render_components
+from main import compute_raw_signal, fmt_alloc, render_components, render_price_filter
 
 STATE_FILE = Path(__file__).parent / "last_state.json"
 
 if __name__ == "__main__":
     cur = compute_raw_signal()
     print("Live raw signal (not committed):")
-    print(f"  raw_signal: {cur['raw_signal']} (score {cur['score']}/3)")
+    print(f"  macro_signal: {cur['macro_signal']} (score {cur['score']}/3)")
+    print(f"  price_filter: {'✓' if cur['price_filter'] else '✗'} ({render_price_filter(cur['components'])})")
     print(f"  as of close: {cur['last_close_date']}\n")
     print(render_components(cur["components"]))
     print()
@@ -25,11 +26,12 @@ if __name__ == "__main__":
             target = fmt_alloc(off_alloc)
         else:
             target = "(off-bucket classification pending next main.py run)"
+        buf = prev.get("macro_rolling_buffer") or prev.get("rolling_buffer") or prev.get("buffer")
         print(f"Last committed state ({prev.get('asof')}):")
-        print(f"  deployed_state: {deployed}")
-        print(f"  target:         {target}")
-        print(f"  rolling_buffer: {prev.get('rolling_buffer') or prev.get('buffer')}")
-        print(f"  last_close:     {prev['last_close_date']}")
+        print(f"  deployed_state:       {deployed}")
+        print(f"  target:               {target}")
+        print(f"  macro_rolling_buffer: {buf}")
+        print(f"  last_close:           {prev['last_close_date']}")
         if deployed == "risk-off" and off_alloc:
             regime = prev.get("off_regime") or {}
             print(f"  classified_at:  {prev.get('off_classified_at')}")
