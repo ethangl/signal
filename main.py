@@ -1,4 +1,4 @@
-"""Daily QQQ regime signal bot with asymmetric hysteresis. See docs/SPEC.md."""
+"""Daily QQQ regime signal bot with asymmetric hysteresis + depth-aware off-bucket. See docs/SPEC.md."""
 import json
 import os
 import sys
@@ -15,12 +15,11 @@ PUSHOVER_URL = "https://api.pushover.net/1/messages.json"
 
 BUFFER_SIZE = 3
 
-# (dollar, nfci) → (regime name, off-bucket allocation as ordered dict).
-DOLLAR_REGIMES = {
-    ("strong", "tight"): ("stress",          {"XLU": 10, "GLD": 30, "UUP": 60}),
-    ("strong", "loose"): ("cyclical strong", {"XLU": 30, "GLD": 40, "UUP": 30}),
-    ("weak",   "tight"): ("weak",            {"XLU": 30, "GLD": 50, "UUP": 20}),
-    ("weak",   "loose"): ("weak",            {"XLU": 30, "GLD": 50, "UUP": 20}),
+# depth → (description, ordered allocation dict). Iteration order is the
+# canonical render order for SELL/BUY/TARGET lines.
+DEPTH_ALLOCATIONS = {
+    0: ("deep stress", {"XLU": 10, "GLD": 55, "UUP": 35}),
+    1: ("mild stress", {"XLU": 30, "GLD": 45, "UUP": 25}),
 }
 
 
@@ -59,13 +58,6 @@ def fred_value_and_sma(series: str, window: int) -> tuple[float, float]:
     return float(s.iloc[-1]), float(s.tail(window).mean())
 
 
-def fred_latest(series: str) -> float:
-    obs = fred_observations(series)
-    if not obs:
-        raise RuntimeError(f"{series}: no observations")
-    return obs[-1]
-
-
 def compute_raw_signal() -> dict:
     lqd, lqd_ma, close_date = yf_close_sma("LQD")
     move, move_ma, _ = yf_close_sma("^MOVE")
@@ -86,22 +78,6 @@ def compute_raw_signal() -> dict:
             "nfci": [nfci_cr, nfci_cr_ma, c[2]],
             "qqq":  [qqq,     qqq_ma,     price_filter],
         },
-    }
-
-
-def classify_dollar_regime() -> dict:
-    dtwex, dtwex_ma = fred_value_and_sma("DTWEXBGS", 200)
-    nfci = fred_latest("NFCI")
-    dollar = "strong" if dtwex > dtwex_ma else "weak"
-    tightness = "tight" if nfci > 0 else "loose"
-    name, alloc = DOLLAR_REGIMES[(dollar, tightness)]
-    return {
-        "dollar": dollar,
-        "nfci": tightness,
-        "regime": name,
-        "allocation": alloc,
-        "dtwex": [dtwex, dtwex_ma],
-        "nfci_val": nfci,
     }
 
 
@@ -126,8 +102,26 @@ def apply_hysteresis(
     return "risk-off"
 
 
+def depth_for_score(score: int) -> int:
+    """0 = deep stress, 1 = mild stress. For score>=2 (risk-on macro) we fall
+    back to 1 — only used during v1.8→v1.9 migration when the score has already
+    crossed the risk-on threshold but the buffer hasn't confirmed yet."""
+    return 0 if score == 0 else 1
+
+
 def fmt_alloc(alloc: dict) -> str:
     return " + ".join(f"{v}% {k}" for k, v in alloc.items())
+
+
+def alloc_delta(prev: dict, new: dict) -> tuple[dict, dict]:
+    """Return (sells, buys), each ordered like `new` and including 0% entries
+    so depth-change notifications show all three tickers per spec format."""
+    sells, buys = {}, {}
+    for k in new:
+        delta = new[k] - prev.get(k, 0)
+        sells[k] = max(-delta, 0)
+        buys[k] = max(delta, 0)
+    return sells, buys
 
 
 def render_components(comp: dict) -> str:
@@ -148,31 +142,36 @@ def render_price_filter(comp: dict) -> str:
     return f"QQQ {qqq_v:.2f} vs 50d MA {qqq_m:.2f} [{mark}]"
 
 
-def render_dollar_context(regime: dict) -> str:
-    dtwex_v, dtwex_m = regime["dtwex"]
-    return (
-        f"DTWEXBGS: {dtwex_v:8.2f} vs 200d MA {dtwex_m:8.2f}   {regime['dollar']}\n"
-        f"NFCI:     {regime['nfci_val']:+.4f}                       {regime['nfci']}"
-    )
-
-
 def render_off_flip(state: dict) -> str:
-    regime = state["off_regime"]
+    desc = DEPTH_ALLOCATIONS[state["current_depth"]][0]
     return (
         f"REGIME CHANGE: risk-off\n"
-        f"Macro score {state['score']}/3. Dollar regime: {regime['regime']}\n\n"
+        f"Macro score {state['score']}/3 — {desc}\n\n"
         f"Monday 10:30am ET execution:\n"
         f"SELL: 100% QQQ\n"
-        f"BUY:  {fmt_alloc(state['off_allocation'])}\n\n"
+        f"BUY:  {fmt_alloc(state['current_allocation'])}\n\n"
         f"Macro components:\n"
-        + render_components(state["components"]) + "\n\n"
-        f"Dollar regime context:\n"
-        + render_dollar_context(regime)
+        + render_components(state["components"])
     )
 
 
-def render_on_flip(state: dict, prev_off_alloc: dict | None) -> str:
-    sell = fmt_alloc(prev_off_alloc) if prev_off_alloc else "current off-bucket allocation"
+def render_depth_change(state: dict, prev_alloc: dict, direction: str) -> str:
+    adj = "deep-stress" if state["current_depth"] == 0 else "mild-stress"
+    sells, buys = alloc_delta(prev_alloc, state["current_allocation"])
+    return (
+        f"DEPTH CHANGE: stress {direction} to score {state['score']}/3\n"
+        f"Allocation rotating to {adj} weights\n\n"
+        f"Monday 10:30am ET execution (rebalance within risk-off):\n"
+        f"SELL: {fmt_alloc(sells)}\n"
+        f"BUY:  {fmt_alloc(buys)}\n"
+        f"TARGET: {fmt_alloc(state['current_allocation'])}\n\n"
+        f"Macro components:\n"
+        + render_components(state["components"])
+    )
+
+
+def render_on_flip(state: dict, prev_alloc: dict | None) -> str:
+    sell = fmt_alloc(prev_alloc) if prev_alloc else "current off-bucket allocation"
     return (
         f"REGIME CHANGE: risk-on\n"
         f"Macro score {state['score']}/3 confirmed for {BUFFER_SIZE} consecutive days.\n"
@@ -189,7 +188,7 @@ def render_status(state: dict) -> str:
     if state["deployed_state"] == "risk-on":
         target = "100% QQQ"
     else:
-        target = fmt_alloc(state["off_allocation"])
+        target = fmt_alloc(state["current_allocation"])
     pf = "✓" if state["price_filter"] else "✗"
     return (
         f"macro_signal: {state['macro_signal']} (score {state['score']}/3)\n"
@@ -220,21 +219,24 @@ def main() -> int:
     cur = compute_raw_signal()
     prev = json.loads(STATE_FILE.read_text()) if STATE_FILE.exists() else {}
 
-    # v1.7 → v1.8: state file rename rolling_buffer → macro_rolling_buffer
-    # and resize from 5 to 3. Accept either old name on read.
-    prev_buffer = prev.get("macro_rolling_buffer")
-    if prev_buffer is None:
-        prev_buffer = prev.get("rolling_buffer") or prev.get("buffer")
+    prev_buffer = (
+        prev.get("macro_rolling_buffer")
+        or prev.get("rolling_buffer")
+        or prev.get("buffer")
+    )
 
     needs_buffer_migration = bool(prev) and (
         prev_buffer is None or len(prev_buffer) != BUFFER_SIZE
     )
-    needs_alloc_classification = (
-        prev.get("deployed_state") == "risk-off" and "off_allocation" not in prev
+    # v1.8 → v1.9: active risk-off positions get current_depth seeded from
+    # the current macro_score and inherit the v1.8 off_allocation. No
+    # depth-change notification fires on the migration run itself.
+    needs_v19_migration = (
+        prev.get("deployed_state") == "risk-off" and "current_depth" not in prev
     )
     is_new_close = prev.get("last_close_date") != cur["last_close_date"]
 
-    if not is_new_close and not (needs_buffer_migration or needs_alloc_classification):
+    if not is_new_close and not needs_buffer_migration and not needs_v19_migration:
         print(
             f"Already processed close of {cur['last_close_date']}. No-op.\n"
             f"deployed_state: {prev.get('deployed_state')}, "
@@ -242,8 +244,6 @@ def main() -> int:
         )
         return 0
 
-    # On schema migration, seed macro_rolling_buffer with the current
-    # macro_signal repeated BUFFER_SIZE times (per v1.7 → v1.8 spec).
     if needs_buffer_migration:
         buffer = [cur["macro_signal"]] * BUFFER_SIZE
     elif is_new_close:
@@ -263,31 +263,57 @@ def main() -> int:
 
     flipped_to_off = prev_deployed == "risk-on" and deployed == "risk-off"
     flipped_to_on  = prev_deployed == "risk-off" and deployed == "risk-on"
-    prev_off_alloc = prev.get("off_allocation")
 
-    # Classify whenever we (re)enter risk-off OR when migrating an existing
-    # risk-off state that pre-dates the v1.5 → v1.6 schema.
-    if deployed == "risk-off" and (flipped_to_off or prev_off_alloc is None):
-        regime = classify_dollar_regime()
-        state["off_regime"] = regime
-        state["off_allocation"] = regime["allocation"]
-        state["off_classified_at"] = state["asof"]
-    elif deployed == "risk-off":
-        state["off_regime"] = prev.get("off_regime")
-        state["off_allocation"] = prev_off_alloc
-        state["off_classified_at"] = prev.get("off_classified_at")
+    prev_depth = prev.get("current_depth")
+    prev_alloc = prev.get("current_allocation") or prev.get("off_allocation")
+
+    depth_change_direction = None
+    if deployed == "risk-on":
+        state["current_depth"] = None
+        state["current_allocation"] = None
+        state["last_classified_at"] = None
+    elif flipped_to_off or prev_deployed is None:
+        depth = depth_for_score(cur["score"])
+        state["current_depth"] = depth
+        state["current_allocation"] = DEPTH_ALLOCATIONS[depth][1]
+        state["last_classified_at"] = state["asof"]
+    elif needs_v19_migration:
+        depth = depth_for_score(cur["score"])
+        state["current_depth"] = depth
+        state["current_allocation"] = prev_alloc or DEPTH_ALLOCATIONS[depth][1]
+        state["last_classified_at"] = prev.get("off_classified_at") or state["asof"]
+    else:
+        new_depth = prev_depth
+        if prev_depth == 1 and cur["score"] == 0:
+            new_depth = 0
+            depth_change_direction = "deepening"
+        elif prev_depth == 0 and cur["score"] == 1:
+            new_depth = 1
+            depth_change_direction = "easing"
+        state["current_depth"] = new_depth
+        if depth_change_direction:
+            state["current_allocation"] = DEPTH_ALLOCATIONS[new_depth][1]
+            state["last_classified_at"] = state["asof"]
+        else:
+            state["current_allocation"] = prev_alloc
+            state["last_classified_at"] = (
+                prev.get("last_classified_at") or prev.get("off_classified_at")
+            )
 
     print(render_status(state))
 
     if flipped_to_off:
         title, msg = "REGIME CHANGE: risk-off", render_off_flip(state)
     elif flipped_to_on:
-        title, msg = "REGIME CHANGE: risk-on", render_on_flip(state, prev_off_alloc)
+        title, msg = "REGIME CHANGE: risk-on", render_on_flip(state, prev_alloc)
+    elif depth_change_direction:
+        title = f"DEPTH CHANGE: stress {depth_change_direction}"
+        msg = render_depth_change(state, prev_alloc, depth_change_direction)
     else:
         title = msg = None
 
     if msg:
-        print("\n--- REGIME CHANGE ---")
+        print("\n--- " + title + " ---")
         print(msg)
         push(title, msg)
     elif not prev:

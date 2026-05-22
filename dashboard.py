@@ -2,7 +2,13 @@
 import json
 from pathlib import Path
 
-from main import compute_raw_signal, fmt_alloc, render_components, render_price_filter
+from main import (
+    DEPTH_ALLOCATIONS,
+    compute_raw_signal,
+    fmt_alloc,
+    render_components,
+    render_price_filter,
+)
 
 STATE_FILE = Path(__file__).parent / "last_state.json"
 
@@ -19,24 +25,26 @@ if __name__ == "__main__":
     else:
         prev = json.loads(STATE_FILE.read_text())
         deployed = prev["deployed_state"]
-        off_alloc = prev.get("off_allocation")
+        alloc = prev.get("current_allocation") or prev.get("off_allocation")
         if deployed == "risk-on":
             target = "100% QQQ"
-        elif off_alloc:
-            target = fmt_alloc(off_alloc)
+        elif alloc:
+            target = fmt_alloc(alloc)
         else:
             target = "(off-bucket classification pending next main.py run)"
-        buf = prev.get("macro_rolling_buffer") or prev.get("rolling_buffer") or prev.get("buffer")
+        buf = (
+            prev.get("macro_rolling_buffer")
+            or prev.get("rolling_buffer")
+            or prev.get("buffer")
+        )
         print(f"Last committed state ({prev.get('asof')}):")
         print(f"  deployed_state:       {deployed}")
         print(f"  target:               {target}")
         print(f"  macro_rolling_buffer: {buf}")
         print(f"  last_close:           {prev['last_close_date']}")
-        if deployed == "risk-off" and off_alloc:
-            regime = prev.get("off_regime") or {}
-            print(f"  classified_at:  {prev.get('off_classified_at')}")
-            if regime:
-                print(
-                    f"  off_regime:     {regime.get('regime')} "
-                    f"({regime.get('dollar')} dollar, {regime.get('nfci')} NFCI)"
-                )
+        if deployed == "risk-off" and alloc:
+            depth = prev.get("current_depth")
+            depth_desc = DEPTH_ALLOCATIONS[depth][0] if depth in DEPTH_ALLOCATIONS else "unclassified"
+            classified_at = prev.get("last_classified_at") or prev.get("off_classified_at")
+            print(f"  current_depth:        {depth} ({depth_desc})")
+            print(f"  classified_at:        {classified_at}")

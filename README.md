@@ -34,16 +34,16 @@ Cron is `30 21 * * 1-5` (UTC). That's 4:30pm EST in winter, 5:30pm EDT in summer
 
 ## Hysteresis
 
-Asymmetric:
+Asymmetric, with price confirmation on re-entry:
 
-- raw_signal goes risk-off → deployed flips immediately.
-- raw_signal goes risk-on → deployed flips only after 5 consecutive trading days of risk-on raw_signal.
+- macro_signal goes risk-off → deployed flips immediately.
+- macro_signal goes risk-on → deployed flips only after 3 consecutive trading days of risk-on macro_signal AND QQQ > 50d MA on the candidate flip day.
 
-The rolling buffer of the last 5 raw_signal values lives in `last_state.json` under `rolling_buffer`.
+The rolling buffer of the last 3 macro_signal values lives in `last_state.json` under `macro_rolling_buffer`.
 
-## Risk-off allocation
+## Risk-off allocation (depth-aware)
 
-At the moment of risk-on → risk-off flip, the dollar regime is classified once (DTWEXBGS vs. 200d MA + NFCI sign) and the resulting off-bucket allocation is frozen for the duration of the risk-off period. See `docs/SPEC.md` for the regime table. The classification and target weights are stored in `last_state.json` under `off_allocation`, `off_classified_at`, and `off_regime`.
+At the moment of risk-on → risk-off flip, depth is classified from the macro score: depth 0 (deep stress, score 0) → 10% XLU + 55% GLD + 35% UUP, depth 1 (mild stress, score 1) → 30% XLU + 45% GLD + 25% UUP. Depth is re-evaluated daily while risk-off: crossing the 0↔1 boundary triggers an immediate rotation and a `DEPTH CHANGE` notification. State lives in `last_state.json` under `current_depth`, `current_allocation`, and `last_classified_at`.
 
 ## Manual trigger
 
