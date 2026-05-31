@@ -2,8 +2,10 @@
 import json
 import os
 import sys
-from datetime import datetime, timezone
+import urllib.parse
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
+from zoneinfo import ZoneInfo
 
 import pandas as pd
 import requests
@@ -201,18 +203,54 @@ def render_status(state: dict) -> str:
     )
 
 
-def push(title: str, msg: str) -> None:
-    r = requests.post(
-        PUSHOVER_URL,
-        data={
-            "token": os.environ["PUSHOVER_API_TOKEN"],
-            "user": os.environ["PUSHOVER_USER_KEY"],
-            "title": title,
-            "message": msg,
-        },
-        timeout=30,
-    )
+def push(title: str, msg: str, url: str | None = None, url_title: str | None = None) -> None:
+    data = {
+        "token": os.environ["PUSHOVER_API_TOKEN"],
+        "user": os.environ["PUSHOVER_USER_KEY"],
+        "title": title,
+        "message": msg,
+    }
+    if url:
+        data["url"] = url
+        data["url_title"] = url_title or "Open"
+    r = requests.post(PUSHOVER_URL, data=data, timeout=30)
     r.raise_for_status()
+
+
+def next_monday_1030_et() -> datetime:
+    """The upcoming Monday 10:30am ET — when notifications say to execute.
+
+    Returns an ET-aware datetime. The bot runs after the equity close, so a
+    flip detected on a Monday targets the *following* Monday's execution."""
+    et = ZoneInfo("America/New_York")
+    now = datetime.now(et)
+    target = (now + timedelta(days=(0 - now.weekday()) % 7)).replace(
+        hour=10, minute=30, second=0, microsecond=0
+    )
+    if target <= now:
+        target += timedelta(days=7)
+    return target
+
+
+def reminder_link(title: str, state: dict) -> str:
+    """A Shortcuts URL that, when tapped from the Pushover notification, runs an
+    iOS Shortcut to add a native reminder. The shortcut receives a text payload
+    carrying the target allocation and the Monday 10:30am ET execution datetime
+    (in a 'Get Dates from Input'-parseable form). Shortcut name is overridable
+    via SHORTCUT_NAME (default 'Signal Reminder')."""
+    if state["deployed_state"] == "risk-on":
+        target = "100% QQQ"
+    else:
+        target = fmt_alloc(state["current_allocation"])
+    due = next_monday_1030_et()
+    text = f"{title} — execute {due:%Y-%m-%d %H:%M} ET. Target: {target}"
+    name = os.environ.get("SHORTCUT_NAME", "Signal Reminder")
+    return (
+        "shortcuts://run-shortcut?name="
+        + urllib.parse.quote(name)
+        + "&input=text&text="
+        + urllib.parse.quote(text)
+    )
 
 
 def main() -> int:
@@ -315,7 +353,7 @@ def main() -> int:
     if msg:
         print("\n--- " + title + " ---")
         print(msg)
-        push(title, msg)
+        push(title, msg, url=reminder_link(title, state), url_title="Add reminder")
     elif not prev:
         print("\nFirst run: state initialized, no notification.")
     else:
