@@ -1,17 +1,17 @@
 {
   "macro_signal": "risk-off",
   "score": 1,
-  "price_filter": true,
-  "last_close_date": "2026-08-05",
+  "price_filter": false,
+  "last_close_date": "2026-08-06",
   "components": {
     "lqd": [
-      106.73999786376953,
-      109.67764991760254,
+      106.36000061035156,
+      109.64844993591309,
       false
     ],
     "move": [
-      73.58090209960938,
-      72.12935443878173,
+      76.11689758300781,
+      72.14203441619873,
       false
     ],
     "nfci": [
@@ -20,9 +20,9 @@
       true
     ],
     "qqq": [
-      717.2999877929688,
-      715.0083996582031,
-      true
+      714.6500244140625,
+      714.6957995605469,
+      false
     ]
   },
   "deployed_state": "risk-off",
@@ -31,7 +31,7 @@
     "risk-off",
     "risk-off"
   ],
-  "asof": "2026-08-05T22:35:13+00:00",
+  "asof": "2026-08-07T01:03:33+00:00",
   "current_depth": 1,
   "current_allocation": {
     "XLU": 30,
